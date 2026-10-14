@@ -5,8 +5,12 @@ import type {Reel} from './storage';
 
 const sleep = (ms: number) => new Promise<void>(r => setTimeout(r, ms));
 
+const redact = (t: string) => t.replace(/access_token=[^&\s"]+/g, 'access_token=***').replace(/OAuth [^\s"]+/g, 'OAuth ***');
+const log = (...a: unknown[]) => console.log('[IG]', ...a.map(x => (typeof x === 'string' ? redact(x) : x)));
+
 async function graph(path: string, method: 'GET' | 'POST', params: Record<string, string>) {
   const query = new URLSearchParams(params).toString();
+  log(`${method} ${GRAPH_API}/${path}`, query);
   const res = await fetch(
     method === 'GET' ? `${GRAPH_API}/${path}?${query}` : `${GRAPH_API}/${path}`,
     method === 'POST'
@@ -18,27 +22,53 @@ async function graph(path: string, method: 'GET' | 'POST', params: Record<string
       : undefined,
   );
   const json = await res.json().catch(() => ({}));
+  log(`<- ${res.status}`, JSON.stringify(json));
   if (!res.ok || json.error) {
-    throw new AppError(`Instagram: ${json.error?.message ?? res.status}`);
+    const e = json.error ?? {};
+    throw new AppError(
+      `Instagram: ${e.message ?? res.status}${e.code ? ` (code ${e.code}` : ''}${e.error_subcode ? `/${e.error_subcode}` : ''}${e.code ? ')' : ''}`,
+    );
   }
   return json;
 }
 
-// Raw binary upload (multipart would be rejected), so use XHR with a file body.
-function uploadFile(url: string, path: string, size: number, token: string) {
+// Raw binary upload (multipart would be rejected), so use XHR with a raw body.
+function sendFile(url: string, body: any, size: number, token: string) {
   return new Promise<void>((resolve, reject) => {
     const xhr = new XMLHttpRequest();
     xhr.open('POST', url);
     xhr.setRequestHeader('Authorization', `OAuth ${token}`);
+    xhr.setRequestHeader('Content-Type', 'application/octet-stream');
     xhr.setRequestHeader('offset', '0');
     xhr.setRequestHeader('file_size', String(size));
-    xhr.onload = () =>
-      xhr.status === 200
+    xhr.onload = () => {
+      log(`<- upload ${xhr.status}`, xhr.responseText);
+      return xhr.status === 200
         ? resolve()
         : reject(new AppError(`Instagram upload failed (${xhr.status}): ${xhr.responseText}`));
-    xhr.onerror = () => reject(new AppError('Instagram upload failed (network).'));
-    xhr.send({uri: `file://${path}`} as any);
+    };
+    xhr.onerror = (e: any) => {
+      log('upload network error', JSON.stringify(e), `status=${xhr.status}`, xhr.responseText);
+      reject(new AppError('Instagram upload failed (network).'));
+    };
+    xhr.ontimeout = () => reject(new AppError('Instagram upload timed out.'));
+    xhr.send(body);
   });
+}
+
+async function uploadFile(url: string, path: string, size: number, token: string) {
+  log(`POST ${url} (upload, ${size} bytes) file://${path}`);
+  try {
+    await sendFile(url, {uri: `file://${path}`}, size, token);
+  } catch (e) {
+    if (!(e instanceof AppError) || !/network/.test(e.message)) {
+      throw e;
+    }
+    log('retrying upload as Blob');
+    const blob = await (await fetch(`file://${path}`)).blob();
+    log(`blob size ${blob.size}`);
+    await sendFile(url, blob, size, token);
+  }
 }
 
 export async function postReel(reel: Reel, s: {userId: string; token: string}, onStep: (t: string) => void) {

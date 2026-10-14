@@ -91,6 +91,7 @@ export async function generateVideo(
   const videoPath = `${reelsDir}/part_${part.startGlobal}.mp4`;
   const thumbPath = `${reelsDir}/part_${part.startGlobal}.png`;
   const audioPaths: string[] = [];
+  const chapterFiles = new Map<string, string>(); // whole-surah downloads, shared by verses
   const pngPaths: string[] = [];
   let ok = false;
 
@@ -102,12 +103,34 @@ export async function generateVideo(
     const verses = part.verses;
     for (let i = 0; i < verses.length; i++) {
       onStep(`Downloading audio ${i + 1}/${verses.length}`);
-      const path = `${dir}/${id}_${i}.mp3`;
+      const v = verses[i];
+      const path = `${dir}/${id}_${i}.${v.clip ? 'm4a' : 'mp3'}`;
       audioPaths.push(path);
       try {
-        const dl = await RNFS.downloadFile({fromUrl: verses[i].audioUrl, toFile: path}).promise;
-        if (dl.statusCode !== 200) {
-          throw new Error(String(dl.statusCode));
+        let src = path;
+        if (v.clip) {
+          src = chapterFiles.get(v.audioUrl) ?? `${dir}/${id}_chapter${chapterFiles.size}.mp3`;
+          if (!chapterFiles.has(v.audioUrl)) {
+            chapterFiles.set(v.audioUrl, src);
+            const dl = await RNFS.downloadFile({fromUrl: v.audioUrl, toFile: src}).promise;
+            if (dl.statusCode !== 200) {
+              throw new Error(String(dl.statusCode));
+            }
+          }
+          // Cut this verse out of the surah file.
+          const from = (v.clip.fromMs / 1000).toFixed(3);
+          const len = ((v.clip.toMs - v.clip.fromMs) / 1000).toFixed(3);
+          const cut = await FFmpegKit.execute(
+            `-y -ss ${from} -t ${len} -i "${src}" -vn -c:a aac -b:a 128k "${path}"`,
+          );
+          if (!ReturnCode.isSuccess(await cut.getReturnCode())) {
+            throw new Error('cut failed');
+          }
+        } else {
+          const dl = await RNFS.downloadFile({fromUrl: v.audioUrl, toFile: path}).promise;
+          if (dl.statusCode !== 200) {
+            throw new Error(String(dl.statusCode));
+          }
         }
       } catch {
         throw new AppError('Audio download failed. Please try again.');
@@ -210,7 +233,7 @@ export async function generateVideo(
     return {videoPath, thumbPath, thumbMs};
   } finally {
     // Keep the final mp4 only on success.
-    const temp = [...pngPaths, ...audioPaths, ...(ok ? [] : [videoPath, thumbPath])];
+    const temp = [...pngPaths, ...audioPaths, ...chapterFiles.values(), ...(ok ? [] : [videoPath, thumbPath])];
     await Promise.all(temp.map(p => RNFS.unlink(p).catch(() => {})));
   }
 }

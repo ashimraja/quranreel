@@ -6,7 +6,12 @@ export const RECITERS = [
   {id: 2, name: 'AbdulBaset AbdulSamad'},
   {id: 6, name: 'Mahmoud Al-Husary'},
   {id: 9, name: 'Mohamed Al-Minshawi'},
+  {id: 97, name: 'Yasser Ad-Dussary'},
 ];
+// Reciters served as one audio file per surah (with verse/word timestamps) from
+// Quran.com's QDC API; verses are cut out of that file when making a video.
+export const CHAPTER_FILE_RECITERS = [97];
+export const QDC_API = 'https://api.qurancdn.com/api/qdc';
 export const DEFAULT_RECITER_ID = 7;
 // Quran.com translation id. 20 = Saheeh International.
 export const TRANSLATION_ID = 20;
@@ -14,8 +19,8 @@ export const QURAN_COM_API = 'https://api.quran.com/api/v4';
 export const AUDIO_HOST = 'https://verses.quran.com/';
 
 // Instagram Graph API (Instagram Content Publishing).
-export const GRAPH_API = 'https://graph.facebook.com/v21.0';
-export const RUPLOAD_API = 'https://rupload.facebook.com/ig-api-upload/v21.0';
+export const GRAPH_API = 'https://graph.facebook.com/v23.0';
+export const RUPLOAD_API = 'https://rupload.facebook.com/ig-api-upload/v23.0';
 
 export const TOTAL_AYAHS = 6236;
 
@@ -36,9 +41,32 @@ export const MIN_STEP_SECONDS = 0.6; // never switch faster than this
 export const HASHTAGS = [
   '#Quran',
   '#QuranVerses',
-  '#AyahByAyah',
   '#QuranRecitation',
+  '#QuranDaily',
+  '#QuranReading',
+  '#QuranQuotes',
+  '#QuranTranslation',
+  '#QuranLovers',
+  '#Surah',
+  '#Ayah',
+  '#AyahByAyah',
+  '#Tilawat',
   '#Islam',
+  '#Islamic',
+  '#IslamicReminders',
+  '#IslamicPost',
+  '#IslamicQuotes',
+  '#IslamicReels',
   '#Muslim',
+  '#Muslims',
+  '#Allah',
+  '#Alhamdulillah',
+  '#SubhanAllah',
+  '#Dua',
+  '#Deen',
+  '#Iman',
+  '#Sunnah',
+  '#Ramadan',
   '#Reels',
+  '#ReelsInstagram',
 ];

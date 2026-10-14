@@ -1,6 +1,8 @@
 import NetInfo from '@react-native-community/netinfo';
 import {
   AUDIO_HOST,
+  CHAPTER_FILE_RECITERS,
+  QDC_API,
   QURAN_COM_API,
   TRANSLATION_ID,
 } from './config';
@@ -15,6 +17,8 @@ export type Verse = {
   timings: {start: number; end: number}[];
   translation: string;
   audioUrl: string;
+  // Set when audioUrl is a whole-surah file: the verse is this span of it (ms).
+  clip?: {fromMs: number; toMs: number};
   // Rough length used only for splitting a surah into videos.
   estimatedMs: number;
 };
@@ -71,12 +75,41 @@ export async function getSurah(surah: number, reciterId: number): Promise<Verse[
   }
   const chap = (await getChapters())[surah - 1];
   try {
-    const rec = await getJson(
-      `${QURAN_COM_API}/recitations/${reciterId}/by_chapter/${surah}?fields=segments&per_page=300`,
-    );
-    const audio = new Map<string, any>(
-      rec.audio_files.map((a: any) => [a.verse_key, a]),
-    );
+    // verse_key -> audio url, [start, end] per word (ms), and the clip span for
+    // whole-surah files. Per-verse files have timings relative to the verse already.
+    type Audio = {url: string; segs: number[][]; clip?: {fromMs: number; toMs: number}};
+    const audio = new Map<string, Audio>();
+    if (CHAPTER_FILE_RECITERS.includes(reciterId)) {
+      const j = await getJson(
+        `${QDC_API}/audio/reciters/${reciterId}/audio_files?chapter=${surah}&segments=true`,
+      );
+      const f = j.audio_files[0];
+      for (const vt of f.verse_timings) {
+        // Segments are [wordIndex, startMs, endMs].
+        const segs: number[][] = vt.segments.map((x: number[]) => [x[x.length - 2], x[x.length - 1]]);
+        if (!segs.length) {
+          continue;
+        }
+        const fromMs = Math.max(0, Math.min(vt.timestamp_from, segs[0][0]));
+        const toMs = Math.max(vt.timestamp_to, segs[segs.length - 1][1]) + 150;
+        audio.set(vt.verse_key, {
+          url: f.audio_url,
+          segs: segs.map(x => [x[0] - fromMs, x[1] - fromMs]),
+          clip: {fromMs, toMs},
+        });
+      }
+    } else {
+      const rec = await getJson(
+        `${QURAN_COM_API}/recitations/${reciterId}/by_chapter/${surah}?fields=segments&per_page=300`,
+      );
+      for (const a of rec.audio_files) {
+        // Segments are [wordIndex, wordPosition, startMs, endMs].
+        audio.set(a.verse_key, {
+          url: a.url,
+          segs: (a.segments ?? []).map((x: number[]) => [x[2], x[3]]),
+        });
+      }
+    }
 
     const verses: Verse[] = [];
     for (let page = 1; page; ) {
@@ -90,13 +123,12 @@ export async function getSurah(surah: number, reciterId: number): Promise<Verse[
           .filter((w: any) => w.char_type_name === 'word')
           .map((w: any) => w.text_uthmani);
         const a = audio.get(v.verse_key);
-        const segs: number[][] = a?.segments ?? [];
+        const segs = a?.segs ?? [];
         if (!a?.url || !segs.length || !words.length) {
           throw new Error('missing data');
         }
 
-        // Segments are [wordIndex, wordPosition, startMs, endMs].
-        let timings = segs.map(s => ({start: s[2], end: s[3]}));
+        let timings = segs.map(x => ({start: x[0], end: x[1]}));
         const endMs = timings[timings.length - 1].end;
         if (timings.length !== words.length) {
           // Rare count mismatch: spread words over the spoken span by letter count.
@@ -128,6 +160,7 @@ export async function getSurah(surah: number, reciterId: number): Promise<Verse[
             : url.startsWith('http')
             ? url
             : AUDIO_HOST + url,
+          clip: a.clip,
           estimatedMs: endMs + 400,
         });
       }
